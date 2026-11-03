@@ -1,0 +1,11 @@
+{
+  "name": "untint-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pwa": "node pwa-check.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.1"
+  }
+}

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Untint</title>
+<meta name="description" content="A colour puzzle: one colour slips out of register in each row and column. Drag the lines back until the picture lines up.">
+<meta name="theme-color" content="#edf0f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111319" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Untint">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&family=Unbounded:wght@500;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <h1 class="brand"><span class="mark" aria-hidden="true"><i></i><i></i></span>Untint</h1>
+    <div class="stats"><span id="stTime">0:00</span><span id="stMoves">0 moves</span></div>
+    <button class="icon-btn" id="setBtn" type="button" aria-label="Puzzle settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h11M21 18h-1"/><circle cx="16" cy="6" r="2.4"/><circle cx="10" cy="12" r="2.4"/><circle cx="18" cy="18" r="2.4"/></svg>
+    </button>
+  </header>
+
+  <main class="layout">
+    <div class="board" id="board">
+      <div class="tabs cols" id="colTabs"></div>
+      <div class="tabs rows" id="rowTabs"></div>
+      <div class="stage fresh" id="stage" tabindex="0" aria-label="Puzzle picture. Drag a column up or down, or a row sideways. Arrow keys move the selected line.">
+        <canvas id="cv"></canvas>
+        <div class="gridlines"></div>
+        <div class="sel" id="sel"><span class="arrows" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M7 8l5-5 5 5M7 16l5 5 5-5"/></svg></span></div>
+        <div class="peek-label">Original</div>
+        <div class="legend" aria-hidden="true"><span><i style="background:#ff8c00"></i>picture</span><span><i style="background:#00beff"></i><b id="legendMov">blue</b></span><span><i style="background:#fff"></i>lined up</span></div>
+      </div>
+      <div class="meta">
+        <button class="scene-btn" id="sceneBtn" type="button">Beach day</button>
+        <div class="match" id="meter"><span>Match <b id="matchPct">0%</b></span><span class="bar"><i id="bar"></i></span></div>
+      </div>
+    </div>
+
+    <section class="panel" aria-label="Controls">
+      <div class="play" id="play">
+        <div class="phead" id="phead">
+          <button class="icon-btn" id="nudgeA" type="button" aria-label="Move left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+          <div class="lname" aria-live="polite"><span id="lineKind">Column</span> <b id="lineNum">1</b><span class="moved" id="lineMoved">moved 0 px</span><small id="lineOk"></small></div>
+          <button class="icon-btn" id="nudgeB" type="button" aria-label="Move right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+        </div>
+        <p class="tip" id="tip"></p>
+        <div class="actions">
+          <button class="btn peek" id="peekBtn" type="button">Hold to see the original</button>
+          <button class="btn" id="resetBtn" type="button">Reset line</button>
+          <button class="btn primary" id="newBtn" type="button">New puzzle</button>
+        </div>
+      </div>
+
+      <div class="win" id="win" hidden>
+        <p class="eyebrow">Back in register</p>
+        <h2 id="wTitle">Lake at dusk</h2>
+        <dl class="wstats">
+          <div><dt>Time</dt><dd id="wTime">0:00</dd></div>
+          <div><dt>Moves</dt><dd id="wMoves">0</dd></div>
+          <div><dt>Peeks</dt><dd id="wPeeks">0</dd></div>
+        </dl>
+        <p class="wbest" id="wBest"></p>
+        <div class="actions">
+          <button class="btn primary" id="wNext" type="button">Next picture</button>
+          <button class="btn" id="wBigger" type="button">Try 4×4</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="backdrop" id="sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="shead">
+      <h2 id="sheetTitle">New puzzle</h2>
+      <button class="icon-btn" id="closeSheet" type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="field">
+      <span class="flabel">Picture</span>
+      <div class="pics" id="pics"></div>
+      <input type="file" id="file" accept="image/*" class="vh" tabindex="-1" aria-hidden="true">
+      <p class="uperr" id="upErr" hidden></p>
+    </div>
+    <div class="field">
+      <span class="flabel" id="gridLabel">Grid</span>
+      <div class="seg mono" id="segGrid" role="group" aria-labelledby="gridLabel">
+        <button type="button" data-n="3">3×3</button><button type="button" data-n="4">4×4</button><button type="button" data-n="5">5×5</button><button type="button" data-n="6">6×6</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="flabel" id="diffLabel">Difficulty</span>
+      <div class="seg" id="segDiff" role="group" aria-labelledby="diffLabel">
+        <button type="button" data-diff="easy">Easy<small>Outline guide, big slips</small></button>
+        <button type="button" data-diff="medium">Medium<small>Colour boost</small></button>
+        <button type="button" data-diff="hard">Hard<small>No guide, small slips</small></button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="flabel" id="chLabel">Colour that slips</span>
+      <div class="seg" id="segCh" role="group" aria-labelledby="chLabel">
+        <button type="button" data-ch="r"><span class="swatch" style="background:#e5484d"></span>Red</button>
+        <button type="button" data-ch="g"><span class="swatch" style="background:#2b9a48"></span>Green</button>
+        <button type="button" data-ch="b"><span class="swatch" style="background:#3a6ee0"></span>Blue</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="flabel" id="linesLabel">What slips</span>
+      <div class="seg" id="segLines" role="group" aria-labelledby="linesLabel">
+        <button type="button" data-lines="cols">Columns<small>Drag up and down</small></button>
+        <button type="button" data-lines="both">Rows and columns<small>Drag any direction</small></button>
+      </div>
+    </div>
+    <div class="field">
+      <label class="switch" for="optNumbers"><span>Show numbers<small>How far you have moved each line, in pixels</small></span><input type="checkbox" id="optNumbers"></label>
+      <label class="switch" for="optHints"><span>Show progress hints<small>Match meter, a dot on lines that are right, and snapping when you get close</small></span><input type="checkbox" id="optHints"></label>
+    </div>
+    <button class="btn primary" id="startBtn" type="button">Start puzzle</button>
+    <div class="install" id="installRow" hidden>
+      <span>Install Untint<small id="installHint">Play full-screen and offline, from your home screen.</small></span>
+      <button class="btn" id="installBtn" type="button">Install</button>
+    </div>
+    <p class="version">Untint 1.0 · works offline once installed</p>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
