@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Untint</title>
-<meta name="description" content="A colour puzzle: one colour slips out of register in each row and column. Drag the lines back until the picture lines up.">
+<meta name="description" content="A colour puzzle: one colour slips out of register in each row and column, or turns in each tile. Drag it back until the picture lines up.">
 <meta name="theme-color" content="#edf0f4" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#111319" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
@@ -38,7 +38,8 @@
       <div class="stage fresh" id="stage" tabindex="0" aria-label="Puzzle picture. Drag a column up or down, or a row sideways. Arrow keys move the selected line.">
         <canvas id="cv"></canvas>
         <div class="gridlines"></div>
-        <div class="sel" id="sel"><span class="arrows" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M7 8l5-5 5 5M7 16l5 5 5-5"/></svg></span></div>
+        <div class="tiles" id="tiles" aria-hidden="true"></div>
+        <div class="sel" id="sel"><span class="arrows" aria-hidden="true"><svg class="mv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M7 8l5-5 5 5M7 16l5 5 5-5"/></svg><svg class="rot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></span></div>
         <div class="peek-label">Original</div>
         <div class="legend" aria-hidden="true"><span><i style="background:#ff8c00"></i>picture</span><span><i style="background:#00beff"></i><b id="legendMov">blue</b></span><span><i style="background:#fff"></i>lined up</span></div>
       </div>
@@ -51,10 +52,11 @@
     <section class="panel" aria-label="Controls">
       <div class="play" id="play">
         <div class="phead" id="phead">
-          <button class="icon-btn" id="nudgeA" type="button" aria-label="Move left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+          <button class="icon-btn" id="nudgeA" type="button" aria-label="Move left"><svg class="mv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><svg class="rot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
           <div class="lname" aria-live="polite"><span id="lineKind">Column</span> <b id="lineNum">1</b><span class="moved" id="lineMoved">moved 0 px</span><small id="lineOk"></small></div>
-          <button class="icon-btn" id="nudgeB" type="button" aria-label="Move right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+          <button class="icon-btn" id="nudgeB" type="button" aria-label="Move right"><svg class="mv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg><svg class="rot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
         </div>
+        <div class="seg turnch" id="turnCh" role="group" aria-label="Colour to turn" hidden></div>
         <p class="tip" id="tip"></p>
         <div class="actions">
           <button class="btn peek" id="peekBtn" type="button">Hold to see the original</button>
@@ -94,6 +96,13 @@
       <p class="uperr" id="upErr" hidden></p>
     </div>
     <div class="field">
+      <span class="flabel" id="modeLabel">Mode</span>
+      <div class="seg" id="segMode" role="group" aria-labelledby="modeLabel">
+        <button type="button" data-mode="slide">Slide<small>Drag rows and columns</small></button>
+        <button type="button" data-mode="rotate">Rotate<small>Turn the tiles</small></button>
+      </div>
+    </div>
+    <div class="field">
       <span class="flabel" id="gridLabel">Grid</span>
       <div class="seg mono" id="segGrid" role="group" aria-labelledby="gridLabel">
         <button type="button" data-n="3">3×3</button><button type="button" data-n="4">4×4</button><button type="button" data-n="5">5×5</button><button type="button" data-n="6">6×6</button>
@@ -114,8 +123,9 @@
         <button type="button" data-ch="g"><span class="swatch" style="background:#2b9a48"></span>Green</button>
         <button type="button" data-ch="b"><span class="swatch" style="background:#3a6ee0"></span>Blue</button>
       </div>
+      <p class="fnote" id="chNote" hidden>Pick one or two. With two, each tile has a dial for each colour.</p>
     </div>
-    <div class="field">
+    <div class="field" id="linesField">
       <span class="flabel" id="linesLabel">What slips</span>
       <div class="seg" id="segLines" role="group" aria-labelledby="linesLabel">
         <button type="button" data-lines="cols">Columns<small>Drag up and down</small></button>
@@ -123,15 +133,15 @@
       </div>
     </div>
     <div class="field">
-      <label class="switch" for="optNumbers"><span>Show numbers<small>How far you have moved each line, in pixels</small></span><input type="checkbox" id="optNumbers"></label>
-      <label class="switch" for="optHints"><span>Show progress hints<small>Match meter, a dot on lines that are right, and snapping when you get close</small></span><input type="checkbox" id="optHints"></label>
+      <label class="switch" for="optNumbers"><span>Show numbers<small>How far you have moved each line (pixels) or turned each tile (degrees)</small></span><input type="checkbox" id="optNumbers"></label>
+      <label class="switch" for="optHints"><span>Show progress hints<small>Match meter, a dot on lines and tiles that are right, and snapping when you get close</small></span><input type="checkbox" id="optHints"></label>
     </div>
     <button class="btn primary" id="startBtn" type="button">Start puzzle</button>
     <div class="install" id="installRow" hidden>
       <span>Install Untint<small id="installHint">Play full-screen and offline, from your home screen.</small></span>
       <button class="btn" id="installBtn" type="button">Install</button>
     </div>
-    <p class="version">Untint 1.1 · works offline once installed</p>
+    <p class="version">Untint 1.2 · works offline once installed</p>
   </div>
 </div>
 

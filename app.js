@@ -191,37 +191,55 @@ const store = {
   get(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e){ return d; } },
   set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch (e){} }
 };
-/* guide: what the dragged line turns into while it moves. min/max: how far lines slip at the start. snap: hint snapping distance. */
+/* guide: what the dragged line turns into while it moves. min/max: how far lines slip at the start (px). snap: hint snapping distance.
+   turn/tsnap: the same for rotate mode, in degrees. */
 const DIFFS = {
-  easy:   { min:24, max:60, snap:8, guide:'edges' },
-  medium: { min:14, max:48, snap:6, guide:'boost' },
-  hard:   { min:8,  max:30, snap:4, guide:null }
+  easy:   { min:24, max:60, snap:8, turn:[25, 90], tsnap:8, guide:'edges' },
+  medium: { min:14, max:48, snap:6, turn:[12, 60], tsnap:5, guide:'boost' },
+  hard:   { min:8,  max:30, snap:4, turn:[5, 30],  tsnap:3, guide:null }
 };
-const DEFAULTS = { scene:0, n:3, channel:'b', lines:'both', difficulty:'easy', numbers:true, hints:true };
+const DEFAULTS = { scene:0, n:3, mode:'slide', channel:'b', turn:['r','b'], lines:'both', difficulty:'easy', numbers:true, hints:true };
 function cleanSettings(s){
   s = Object.assign({}, DEFAULTS, s || {});
   if (!(Number.isInteger(s.scene) && SCENES[s.scene])) s.scene = 0;
   if (![3,4,5,6].includes(s.n)) s.n = 3;
+  if (!['slide','rotate'].includes(s.mode)) s.mode = 'slide';
   if (!CHANNELS[s.channel]) s.channel = 'b';
+  const turn = ['r','g','b'].filter(k => Array.isArray(s.turn) && s.turn.includes(k));
+  s.turn = turn.length >= 1 && turn.length <= 2 ? turn : DEFAULTS.turn.slice();
   if (!['cols','both'].includes(s.lines)) s.lines = 'both';
   if (!DIFFS[s.difficulty]) s.difficulty = 'easy';
   s.numbers = !!s.numbers; s.hints = !!s.hints;
-  delete s.mode;
   return s;
 }
-const S = { set:cleanSettings(store.get('untint.settings')), scr:null, cor:null, sel:{ t:'col', i:0 },
+/* Slide mode moves lines: S.scr.col[i], S.scr.row[i] in px. Rotate mode turns tiles: S.scr.c0[k] (and c1[k] with two colours) in degrees,
+   one array per turning colour, k = row * n + column. S.lock marks tiles with nothing to line up in that colour; they stay put. */
+const S = { set:cleanSettings(store.get('untint.settings')), scr:null, cor:null, lock:null, sel:{ t:'col', i:0 },
   moves:0, peeks:0, t0:0, elapsed:0, running:false, solved:false, peeking:false, initMean:1, guide:null };
 const saveSettings = () => store.set('untint.settings', Object.assign({}, S.set, { scene:S.set.scene === 'up' ? 0 : S.set.scene }));
+const rotating = () => S.set.mode === 'rotate';
+const turnChs = () => S.set.turn.map(k => CHANNELS[k].i);
+const colourOf = t => CHANNELS[S.set.turn[+t[1]]];
 
-/* A line's slip wraps around the picture, so +700 and -20 are the same position. err() is the signed distance from correct. */
+/* A line's slip wraps around the picture, so +700 and -20 are the same position; a turn wraps at 360°. err() is the signed distance from correct. */
 const wrapSigned = v => { const m = ((v % SIZE) + SIZE) % SIZE; return m > SIZE / 2 ? m - SIZE : m; };
-const err = (t, i) => wrapSigned(S.scr[t][i] + S.cor[t][i]);
-const lineOk = (t, i) => Math.abs(err(t, i)) <= TOL;
-const activeLines = () => { const L = []; for (let i = 0; i < S.set.n; i++) L.push(['col', i]); if (S.set.lines === 'both') for (let i = 0; i < S.set.n; i++) L.push(['row', i]); return L; };
+const wrapDeg = v => { const m = ((v % 360) + 360) % 360; return m > 180 ? m - 360 : m; };
+const wrapFor = (t, v) => t[0] === 'c' ? wrapDeg(v) : wrapSigned(v);
+const err = (t, i) => wrapFor(t, S.scr[t][i] + S.cor[t][i]);
+/* a tile counts as right when its corners are within about TOL px, so smaller tiles allow a few more degrees */
+const tolDeg = () => Math.max(1, TOL / (SIZE / S.set.n / 2) * 180 / Math.PI);
+const lineOk = (t, i) => Math.abs(err(t, i)) <= (t[0] === 'c' ? tolDeg() : TOL);
+function activeLines(){
+  const L = [], n = S.set.n;
+  if (rotating()){ S.set.turn.forEach((_, c) => { for (let k = 0; k < n * n; k++) if (!S.lock[c][k]) L.push(['c' + c, k]); }); return L; }
+  for (let i = 0; i < n; i++) L.push(['col', i]);
+  if (S.set.lines === 'both') for (let i = 0; i < n; i++) L.push(['row', i]);
+  return L;
+}
 function meanErr(withCor){
   const L = activeLines(); let s = 0;
-  L.forEach(([t, i]) => { s += Math.abs(withCor ? err(t, i) : wrapSigned(S.scr[t][i])); });
-  return s / L.length;
+  L.forEach(([t, i]) => { s += Math.abs(withCor ? err(t, i) : wrapFor(t, S.scr[t][i])); });
+  return L.length ? s / L.length : 0;
 }
 const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 function makeScramble(n, lines, difficulty){
@@ -238,16 +256,21 @@ function makeScramble(n, lines, difficulty){
   };
   return { row:line(lines === 'both'), col:line(true) };
 }
+function makeTurns(n, colours, difficulty){
+  const [lo, hi] = DIFFS[difficulty].turn, scr = {};
+  for (let c = 0; c < colours; c++) scr['c' + c] = Array.from({ length:n * n }, () => (Math.random() < .5 ? -1 : 1) * randInt(lo, hi));
+  return scr;
+}
 
 /* ---------- rendering ---------- */
 const cv = $('cv'); cv.width = cv.height = SIZE;
 const ctx = cv.getContext('2d');
 const out = ctx.createImageData(SIZE, SIZE), dst = out.data;
 const wrap = new Uint16Array(SIZE * 3); for (let k = 0; k < wrap.length; k++) wrap[k] = k % SIZE;
-const tileOf = new Uint8Array(SIZE);
-let src = null, edgeRef = null, edgeMov = null;
+const tileOf = new Uint8Array(SIZE), bounds = new Uint16Array(7);
+let src = null, edgeRef = null, edgeMovs = [];
 function loadSource(){ src = sceneCanvas(S.set.scene).getContext('2d').getImageData(0, 0, SIZE, SIZE).data; }
-/* Edge maps for the easy guide: one from the colours that stay put, one from the colour that slips. */
+/* Edge maps for the easy guide: one from the colours that stay put, one per colour that slips or turns. */
 function edgeMap(I){
   const W = SIZE, T = new Float32Array(W * W), B = new Float32Array(W * W), E = new Uint8ClampedArray(W * W);
   for (let y = 0; y < W; y++) for (let x = 0; x < W; x++){ const k = y * W + x; T[k] = (I[k - (x > 0)] + I[k] + I[k + (x < W - 1)]) / 3; }
@@ -259,14 +282,66 @@ function edgeMap(I){
   return E;
 }
 function computeEdges(){
-  const ch = CHANNELS[S.set.channel].i, a = (ch + 1) % 3, b = (ch + 2) % 3, ref = new Float32Array(SIZE * SIZE), mov = new Float32Array(SIZE * SIZE);
-  for (let k = 0, p = 0; k < ref.length; k++, p += 4){ ref[k] = (src[p + a] + src[p + b]) / 2; mov[k] = src[p + ch]; }
-  edgeRef = edgeMap(ref); edgeMov = edgeMap(mov);
+  const movs = rotating() ? turnChs() : [CHANNELS[S.set.channel].i], keep = [0, 1, 2].filter(c => !movs.includes(c));
+  const ref = new Float32Array(SIZE * SIZE), mov = movs.map(() => new Float32Array(SIZE * SIZE));
+  for (let k = 0, p = 0; k < ref.length; k++, p += 4){
+    let s = 0; for (const c of keep) s += src[p + c];
+    ref[k] = s / keep.length;
+    movs.forEach((c, m) => { mov[m][k] = src[p + c]; });
+  }
+  edgeRef = edgeMap(ref); edgeMovs = mov.map(edgeMap);
+}
+/* Rotate mode leaves out tiles where the turning colour is plain (a sky, a dark band): turning them would change nothing you can see. */
+function computeLock(){
+  const n = S.set.n;
+  return edgeMovs.map(E => Array.from({ length:n * n }, (_, k) => {
+    const T = tileBox(k); let count = 0;
+    for (let y = T.y0; y < T.y1; y++) for (let x = T.x0; x < T.x1; x++) if (E[y * SIZE + x]) count++;
+    return count < T.x1 - T.x0;
+  }));
+}
+/* Tile k in pixels, and the rotation for a turn of a degrees: a pixel at (x, y) shows the colour from (sx, sy) = centre + R(-a) * (x, y) - centre. */
+function tileBox(k){
+  const n = S.set.n, i = Math.floor(k / n), j = k % n, x0 = bounds[j], x1 = bounds[j + 1], y0 = bounds[i], y1 = bounds[i + 1];
+  return { x0, x1, y0, y1, cx:(x0 + x1 - 1) / 2, cy:(y0 + y1 - 1) / 2 };
+}
+const M = SIZE - 1, clampPx = v => v < 0 ? 0 : v > M ? M : v;
+function turnTile(T, a, ch){
+  const th = a * Math.PI / 180, co = Math.cos(th), si = Math.sin(th);
+  for (let y = T.y0; y < T.y1; y++){
+    const dy = y - T.cy, bx = T.cx + dy * si, by = T.cy + dy * co;
+    let p = (y * SIZE + T.x0) * 4 + ch;
+    for (let x = T.x0; x < T.x1; x++, p += 4){
+      const dx = x - T.cx, sx = clampPx(Math.round(bx + dx * co)), sy = clampPx(Math.round(by - dx * si));
+      dst[p] = src[(sy * SIZE + sx) * 4 + ch];
+    }
+  }
+}
+function paintTurn(){
+  const n = S.set.n, chs = turnChs();
+  chs.forEach((ch, c) => { for (let k = 0; k < n * n; k++){ const a = err('c' + c, k); if (a) turnTile(tileBox(k), a, ch); } });
+  const mode = DIFFS[S.set.difficulty].guide, g = S.guide;
+  if (!g || !mode) return;
+  const T = tileBox(g.i), E = edgeMovs[+g.t[1]], th = err(g.t, g.i) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th);
+  for (let y = T.y0; y < T.y1; y++){
+    const dy = y - T.cy, bx = T.cx + dy * si, by = T.cy + dy * co;
+    for (let x = T.x0; x < T.x1; x++){
+      const k = y * SIZE + x, p = k * 4, r = dst[p], gr = dst[p + 1], b = dst[p + 2];
+      if (mode === 'boost'){
+        const L = (r + gr + b) / 3;
+        dst[p] = L + (r - L) * 2.6; dst[p + 1] = L + (gr - L) * 2.6; dst[p + 2] = L + (b - L) * 2.6;
+      } else {
+        const dx = x - T.cx, er = edgeRef[k], em = E[clampPx(Math.round(by - dx * si)) * SIZE + clampPx(Math.round(bx + dx * co))], L = (r + gr + b) * .07;
+        dst[p] = L + er; dst[p + 1] = L + er * .55 + em * .75; dst[p + 2] = L + em;
+      }
+    }
+  }
 }
 /* Every channel stays put except one: inside row i it is read from dx[i] pixels to the left, inside column j from dy[j] pixels above. */
 function paint(){
   dst.set(src);
-  if (!S.peeking){
+  if (!S.peeking && rotating()) paintTurn();
+  else if (!S.peeking){
     const n = S.set.n, ch = CHANNELS[S.set.channel].i, dx = new Int16Array(n), dy = new Int16Array(n);
     for (let i = 0; i < n; i++){ dx[i] = err('row', i); dy[i] = err('col', i); }
     for (let y = 0; y < SIZE; y++){
@@ -290,7 +365,7 @@ function paint(){
             dst[p] = L + (r - L) * 2.6; dst[p + 1] = L + (gr - L) * 2.6; dst[p + 2] = L + (b - L) * 2.6;
           } else {
             /* orange = edges of the colours that stay put, cyan = edges of the slipping colour; they turn white where they meet */
-            const er = edgeRef[k], em = edgeMov[wrap[oy - dy[tileOf[x]]] * SIZE + wrap[x + ox]], L = (r + gr + b) * .07;
+            const er = edgeRef[k], em = edgeMovs[0][wrap[oy - dy[tileOf[x]]] * SIZE + wrap[x + ox]], L = (r + gr + b) * .07;
             dst[p] = L + er; dst[p + 1] = L + er * .55 + em * .75; dst[p + 2] = L + em;
           }
         }
@@ -323,14 +398,18 @@ setInterval(() => { if (S.running) $('stTime').textContent = fmtTime(elapsed());
 
 /* ---------- board ---------- */
 function buildBoard(){
-  const n = S.set.n;
+  const n = S.set.n, rot = rotating();
   $('board').style.setProperty('--n', n);
-  $('board').classList.toggle('cols-only', S.set.lines === 'cols');
+  $('board').classList.toggle('cols-only', !rot && S.set.lines === 'cols');
+  document.body.classList.toggle('mode-rotate', rot);
   for (let p = 0; p < SIZE; p++) tileOf[p] = Math.min(n - 1, Math.floor(p * n / SIZE));
+  for (let i = 0; i <= n; i++) bounds[i] = Math.ceil(i * SIZE / n);
+  const tiles = $('tiles'); tiles.textContent = '';
+  if (rot) for (let k = 0; k < n * n; k++) tiles.appendChild(document.createElement('span')).appendChild(document.createElement('b'));
   ['col','row'].forEach(t => {
     const box = $(t === 'col' ? 'colTabs' : 'rowTabs'), word = t === 'col' ? 'Column' : 'Row';
     box.textContent = '';
-    if (t === 'row' && S.set.lines === 'cols') return;
+    if (rot || (t === 'row' && S.set.lines === 'cols')) return;
     for (let i = 0; i < n; i++){
       const b = document.createElement('button'); b.type = 'button'; b.className = 'tab'; b.dataset.t = t; b.dataset.i = i;
       b.setAttribute('aria-label', word + ' ' + (i + 1));
@@ -341,41 +420,72 @@ function buildBoard(){
 }
 
 function select(t, i){ S.sel = { t, i }; syncSelection(); }
+/* rotate mode: the colour to turn in tile k, keeping the current one unless that colour is plain there. null when the whole tile is plain. */
+function colourFor(k, prefer){
+  const order = [prefer, ...S.set.turn.map((_, c) => 'c' + c)];
+  return order.find(t => !S.lock[+t[1]][k]) || null;
+}
 function syncSelection(){
-  const n = S.set.n, { t, i } = S.sel, p = 100 / n, sel = $('sel'), o = sel.style;
-  if (t === 'col'){ o.left = i * p + '%'; o.top = '0'; o.width = p + '%'; o.height = '100%'; }
+  const n = S.set.n, { t, i } = S.sel, p = 100 / n, sel = $('sel'), o = sel.style, rot = rotating();
+  if (rot){ o.left = (i % n) * p + '%'; o.top = Math.floor(i / n) * p + '%'; o.width = p + '%'; o.height = p + '%'; }
+  else if (t === 'col'){ o.left = i * p + '%'; o.top = '0'; o.width = p + '%'; o.height = '100%'; }
   else { o.left = '0'; o.top = i * p + '%'; o.width = '100%'; o.height = p + '%'; }
   sel.classList.toggle('row', t === 'row');
   document.querySelectorAll('.tab').forEach(b => b.setAttribute('aria-pressed', String(!S.solved && b.dataset.t === t && +b.dataset.i === i)));
-  $('lineKind').textContent = t === 'col' ? 'Column' : 'Row';
+  $('lineKind').textContent = rot ? 'Tile' : t === 'col' ? 'Column' : 'Row';
   $('lineNum').textContent = i + 1;
-  $('phead').classList.toggle('axis-col', t === 'col');
-  $('nudgeA').setAttribute('aria-label', t === 'col' ? 'Move up' : 'Move left');
-  $('nudgeB').setAttribute('aria-label', t === 'col' ? 'Move down' : 'Move right');
+  $('phead').classList.toggle('axis-col', !rot && t === 'col');
+  $('nudgeA').setAttribute('aria-label', rot ? 'Turn anticlockwise' : t === 'col' ? 'Move up' : 'Move left');
+  $('nudgeB').setAttribute('aria-label', rot ? 'Turn clockwise' : t === 'col' ? 'Move down' : 'Move right');
+  if (rot) $('legendMov').textContent = colourOf(t).name;
   refresh();
 }
 function refresh(){
-  const { t, i } = S.sel, hints = S.set.hints, nums = S.set.numbers;
+  const { t, i } = S.sel, hints = S.set.hints, nums = S.set.numbers, rot = rotating();
   document.querySelectorAll('.tab').forEach(b => {
     const bt = b.dataset.t, bi = +b.dataset.i;
     b.textContent = nums ? fmt(wrapSigned(S.cor[bt][bi])) : String(bi + 1);
     b.classList.toggle('ok', hints && lineOk(bt, bi));
   });
-  $('lineMoved').textContent = 'moved ' + fmt(wrapSigned(S.cor[t][i])) + ' px';
+  if (rot){
+    const cs = S.set.turn.map((_, c) => 'c' + c);
+    $('tiles').querySelectorAll('span').forEach((cell, k) => {
+      const live = cs.filter(c => !S.lock[+c[1]][k]);
+      cell.classList.toggle('flat', !live.length);
+      cell.classList.toggle('ok', hints && live.length > 0 && live.every(c => lineOk(c, k)));
+      const a = wrapDeg(S.cor[t][k]);
+      cell.firstChild.textContent = live.includes(t) && a ? fmt(a) + '°' : '';
+    });
+    $('turnCh').querySelectorAll('button').forEach(b => {
+      const c = b.dataset.t;
+      b.setAttribute('aria-pressed', String(c === t));
+      b.disabled = S.lock[+c[1]][i];
+      b.classList.toggle('ok', hints && !b.disabled && lineOk(c, i));
+    });
+  }
+  $('lineMoved').textContent = rot ? 'turned ' + fmt(wrapDeg(S.cor[t][i])) + '°' : 'moved ' + fmt(wrapSigned(S.cor[t][i])) + ' px';
   $('lineOk').textContent = hints && lineOk(t, i) ? 'Looks right' : '';
   const pct = S.solved ? 100 : Math.min(99, Math.max(0, Math.round(100 * (1 - meanErr(true) / S.initMean))));
   $('matchPct').textContent = pct + '%'; $('bar').style.width = pct + '%';
   $('stTime').textContent = fmtTime(elapsed());
   $('stMoves').textContent = S.moves + (S.moves === 1 ? ' move' : ' moves');
 }
+const swatchName = c => `<b><span class="swatch" style="background:${c.color}"></span>${c.name}</b>`;
 function setTip(){
+  const rot = rotating(), thing = rot ? 'tile' : 'line';
+  const guide = {
+    edges:` While you drag, the ${thing} shows outlines: <b>orange</b> for the picture, <b>cyan</b> for the ${rot ? 'turning' : 'slipping'} colour. Make them meet in white.`,
+    boost:` While you drag, the ${thing}’s colours are boosted so the fringes stand out.`
+  }[DIFFS[S.set.difficulty].guide] || '';
+  if (rot){
+    const cs = S.set.turn.map(k => CHANNELS[k]), two = cs.length === 2;
+    $('tip').innerHTML = `Drag round a tile to turn it, until the ${cs.map(swatchName).join(' and ')} line${two ? '' : 's'} up with the rest of the picture.`
+      + (two ? ' Tap the selected tile, or the buttons above, to switch colour.' : '') + guide;
+    return;
+  }
   const c = CHANNELS[S.set.channel];
   const what = S.set.lines === 'cols' ? 'Drag a column up or down' : 'Drag a column up or down, or a row sideways,';
-  const guide = {
-    edges:' While you drag, the line shows outlines: <b>orange</b> for the picture, <b>cyan</b> for the slipping colour. Make them meet in white.',
-    boost:' While you drag, the line’s colours are boosted so the fringes stand out.'
-  }[DIFFS[S.set.difficulty].guide] || '';
-  $('tip').innerHTML = `${what} until the <b><span class="swatch" style="background:${c.color}"></span>${c.name}</b> lines up with the rest of the picture.${guide}`;
+  $('tip').innerHTML = `${what} until the ${swatchName(c)} lines up with the rest of the picture.${guide}`;
   $('legendMov').textContent = c.name;
 }
 
@@ -384,11 +494,11 @@ function moveLine(t, i, v){
   S.cor[t][i] = v;
   startClock(); refresh(); draw();
 }
-/* with hints on, a line that is within SNAP px clicks into place when you let go */
+/* with hints on, a line within snap px (a tile within tsnap degrees) clicks into place when you let go */
 function settle(t, i){
   if (S.set.hints){
-    const e = err(t, i);
-    if (Math.abs(e) <= DIFFS[S.set.difficulty].snap){
+    const e = err(t, i), D = DIFFS[S.set.difficulty];
+    if (Math.abs(e) <= (t[0] === 'c' ? D.tsnap : D.snap)){
       if (e !== 0){ S.cor[t][i] -= e; refresh(); draw(); }
       const sel = $('sel'); sel.classList.add('snap'); setTimeout(() => sel.classList.remove('snap'), 350);
     }
@@ -405,12 +515,32 @@ function tileAt(e){
 }
 stage.addEventListener('pointerdown', e => {
   if (S.solved || S.peeking || drag) return;
-  const { r, i, j } = tileAt(e);
-  drag = { id:e.pointerId, x0:e.clientX, y0:e.clientY, i, j, axis:null, base:0, scale:SIZE / r.width };
+  const { r, i, j } = tileAt(e), n = S.set.n;
+  drag = { id:e.pointerId, x0:e.clientX, y0:e.clientY, i, j, axis:null, base:0, scale:SIZE / r.width,
+    k:i * n + j, cx:r.left + (j + .5) * r.width / n, cy:r.top + (i + .5) * r.height / n };
   try { stage.setPointerCapture(e.pointerId); } catch (x){}
 });
+/* rotate mode: the turn follows the finger's angle around the tile centre, summed up so it can go past a full circle */
+function turnDrag(e){
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+  if (!drag.axis){
+    if (Math.hypot(dx, dy) < 7) return;
+    const t = colourFor(drag.k, S.sel.t);
+    if (!t){ drag.axis = 'none'; return; }
+    drag.axis = t; drag.idx = drag.k; drag.base = S.cor[t][drag.k]; drag.acc = 0;
+    drag.last = Math.atan2(drag.y0 - drag.cy, drag.x0 - drag.cx);
+    select(t, drag.k); S.moves++; showGuide(t, drag.k);
+    stage.classList.add('dragging'); stage.classList.remove('fresh');
+  }
+  if (drag.axis === 'none' || Math.hypot(e.clientX - drag.cx, e.clientY - drag.cy) < 6) return;
+  const a = Math.atan2(e.clientY - drag.cy, e.clientX - drag.cx);
+  let d = a - drag.last; if (d > Math.PI) d -= 2 * Math.PI; else if (d < -Math.PI) d += 2 * Math.PI;
+  drag.acc += d; drag.last = a;
+  moveLine(drag.axis, drag.idx, Math.round(drag.base + drag.acc * 180 / Math.PI));
+}
 stage.addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.id) return;
+  if (rotating()) return turnDrag(e);
   const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
   if (!drag.axis){
     if (Math.hypot(dx, dy) < 7) return;
@@ -427,7 +557,13 @@ function endDrag(e, cancelled){
   if (!drag || e.pointerId !== drag.id) return;
   const d = drag; drag = null;
   stage.classList.remove('dragging');
+  if (d.axis === 'none') return;
   if (d.axis){ hideGuide(350); settle(d.axis, d.idx); }
+  else if (!cancelled && !S.solved && rotating()){
+    /* a tap picks the tile; tapping the selected tile again switches to the other colour */
+    const other = S.set.turn.length === 2 && S.sel.i === d.k ? (S.sel.t === 'c0' ? 'c1' : 'c0') : S.sel.t, t = colourFor(d.k, other);
+    if (t) select(t, d.k);
+  }
   else if (!cancelled && !S.solved){
     /* a tap picks the column; tapping inside the selected column picks the row instead */
     if (S.set.lines === 'both' && S.sel.t === 'col' && S.sel.i === d.j) select('row', d.i);
@@ -438,7 +574,9 @@ stage.addEventListener('pointerup', e => endDrag(e, false));
 stage.addEventListener('pointercancel', e => endDrag(e, true));
 stage.addEventListener('keydown', e => {
   const map = { ArrowUp:['col',-1], ArrowDown:['col',1], ArrowLeft:['row',-1], ArrowRight:['row',1] }, m = map[e.key];
-  if (!m || S.solved || m[0] !== S.sel.t) return;
+  if (!m || S.solved) return;
+  if (rotating()){ if (m[0] === 'row'){ e.preventDefault(); nudge(m[1]); } return; }
+  if (m[0] !== S.sel.t) return;
   e.preventDefault(); nudge(m[1]);
 });
 
@@ -464,21 +602,22 @@ function checkWin(){
   if (!activeLines().every(([t, i]) => lineOk(t, i))) return;
   S.solved = true; stopClock();
   clearTimeout(guideTimer); S.guide = null; stage.classList.remove('guiding');
-  for (const t of ['row','col']) S.cor[t] = S.scr[t].map(v => -v);
+  for (const t in S.scr) S.cor[t] = S.scr[t].map(v => -v);
   paint(); syncSelection();
   stage.classList.remove('shine'); void stage.offsetWidth; stage.classList.add('solved', 'shine');
   setTimeout(showWin, 450);
 }
 function showWin(){
-  const { scene, n, lines, difficulty } = S.set, name = nameOf(scene);
+  const { scene, n, lines, difficulty } = S.set, name = nameOf(scene), rot = rotating();
   $('wTitle').textContent = name;
   $('wTime').textContent = fmtTime(S.elapsed);
   $('wMoves').textContent = S.moves;
   $('wPeeks').textContent = S.peeks;
   let msg;
   if (scene !== 'up'){
-    const key = `slip|${name}|${n}|${lines}|${difficulty}`, all = store.get('untint.best', {}), prev = all[key], t = Math.round(S.elapsed);
-    const where = `${name} at ${n}×${n}, ${difficulty}${lines === 'cols' ? ', columns only' : ''}`;
+    const key = rot ? `turn|${name}|${n}|${S.set.turn.join('')}|${difficulty}` : `slip|${name}|${n}|${lines}|${difficulty}`;
+    const all = store.get('untint.best', {}), prev = all[key], t = Math.round(S.elapsed);
+    const where = `${name} at ${n}×${n}, ${difficulty}` + (rot ? `, turning ${S.set.turn.map(k => CHANNELS[k].name).join(' and ')}` : lines === 'cols' ? ', columns only' : '');
     if (!prev || t < prev.time){ all[key] = { time:t, moves:S.moves }; store.set('untint.best', all); }
     msg = !prev ? `First solve of ${where}.` : t < prev.time ? `New best for ${where}. Old best was ${fmtTime(prev.time)}.` : `Your best for ${where} is ${fmtTime(prev.time)}.`;
   } else msg = 'Your own photo, back in register.';
@@ -490,29 +629,59 @@ function showWin(){
 function newPuzzle(){
   if (S.set.scene === 'up' && !uploadCanvas) S.set.scene = 0;
   const n = S.set.n;
-  S.scr = makeScramble(n, S.set.lines, S.set.difficulty);
-  S.cor = { row:new Array(n).fill(0), col:new Array(n).fill(0) };
-  S.sel = { t:'col', i:0 }; S.moves = 0; S.peeks = 0; S.elapsed = 0; S.running = false; S.solved = false;
+  S.scr = rotating() ? makeTurns(n, S.set.turn.length, S.set.difficulty) : makeScramble(n, S.set.lines, S.set.difficulty);
+  S.cor = {}; for (const t in S.scr) S.cor[t] = new Array(S.scr[t].length).fill(0);
+  S.sel = rotating() ? { t:'c0', i:0 } : { t:'col', i:0 }; S.moves = 0; S.peeks = 0; S.elapsed = 0; S.running = false; S.solved = false;
   startGame();
   stage.classList.add('fresh');
 }
 function startGame(){
-  const { n, channel, lines, difficulty } = S.set;
+  const { n, channel, lines, difficulty } = S.set, rot = rotating();
   loadSource(); computeEdges(); buildBoard();
+  if (rot){
+    S.lock = computeLock();
+    S.lock.forEach((L, c) => L.forEach((flat, k) => { if (flat){ S.scr['c' + c][k] = 0; S.cor['c' + c][k] = 0; } }));
+    if (!colourFor(S.sel.i, S.sel.t) || S.lock[+S.sel.t[1]][S.sel.i]){
+      const first = activeLines()[0]; if (first) S.sel = { t:first[0], i:first[1] };
+    }
+    const box = $('turnCh'); box.textContent = '';
+    box.hidden = S.set.turn.length < 2;
+    S.set.turn.forEach((key, c) => {
+      const b = document.createElement('button'); b.type = 'button'; b.dataset.t = 'c' + c;
+      b.innerHTML = `<span class="swatch" style="background:${CHANNELS[key].color}"></span>${CHANNELS[key].name[0].toUpperCase() + CHANNELS[key].name.slice(1)}`;
+      b.addEventListener('click', () => { if (!S.solved) select('c' + c, S.sel.i); });
+      box.appendChild(b);
+    });
+  } else $('turnCh').hidden = true;
   S.initMean = Math.max(1, meanErr(false));
   clearTimeout(guideTimer); S.guide = null;
   stage.classList.remove('solved', 'shine', 'guiding');
   stage.classList.toggle('g-edges', DIFFS[difficulty].guide === 'edges');
   $('win').hidden = true; $('play').hidden = false;
-  $('sceneBtn').textContent = `${nameOf(S.set.scene)} · ${n}×${n} · ${CHANNELS[channel].name}${lines === 'cols' ? ' · columns' : ''} · ${difficulty}`;
+  const what = rot ? 'turn ' + S.set.turn.map(k => CHANNELS[k].name).join('+') : CHANNELS[channel].name + (lines === 'cols' ? ' · columns' : '');
+  $('sceneBtn').textContent = `${nameOf(S.set.scene)} · ${n}×${n} · ${what} · ${difficulty}`;
+  $('resetBtn').textContent = rot ? 'Reset tile' : 'Reset line';
+  stage.setAttribute('aria-label', rot
+    ? 'Puzzle picture. Drag round a tile to turn it. Left and right arrow keys turn the selected tile.'
+    : 'Puzzle picture. Drag a column up or down, or a row sideways. Arrow keys move the selected line.');
   setTip(); applyPrefs();
   syncSelection(); paint();
+  if (rot) checkWin();
 }
 function applyPrefs(){ document.body.classList.toggle('nonum', !S.set.numbers); $('meter').hidden = !S.set.hints; }
 
 $('resetBtn').addEventListener('click', () => {
   const { t, i } = S.sel;
-  if (S.solved || S.cor[t][i] === 0) return;
+  if (S.solved) return;
+  if (rotating()){
+    /* puts back every colour of the tile, not only the selected one */
+    const turned = Object.keys(S.cor).filter(c => S.cor[c][i] !== 0);
+    if (!turned.length) return;
+    turned.forEach(c => { S.cor[c][i] = 0; });
+    S.moves++; startClock(); refresh(); draw();
+    return;
+  }
+  if (S.cor[t][i] === 0) return;
   S.moves++; moveLine(t, i, 0);
 });
 
@@ -533,7 +702,7 @@ $('wBigger').addEventListener('click', () => { S.set.n = Math.min(6, S.set.n + 1
 let pending = null, lastFocus = null;
 function openSheet(){
   lastFocus = document.activeElement;
-  pending = { scene:S.set.scene, n:S.set.n, channel:S.set.channel, lines:S.set.lines, difficulty:S.set.difficulty };
+  pending = { scene:S.set.scene, n:S.set.n, mode:S.set.mode, channel:S.set.channel, turn:S.set.turn.slice(), lines:S.set.lines, difficulty:S.set.difficulty };
   $('upErr').hidden = true;
   renderPics(); syncSeg();
   $('optNumbers').checked = S.set.numbers; $('optHints').checked = S.set.hints;
@@ -557,15 +726,36 @@ function renderPics(){
   up.addEventListener('click', () => $('file').click());
   box.appendChild(up);
 }
+const DIFF_NOTES = {
+  slide:  { easy:'Outline guide, big slips', medium:'Colour boost', hard:'No guide, small slips' },
+  rotate: { easy:'Outline guide, big turns', medium:'Colour boost', hard:'No guide, small turns' }
+};
 function syncSeg(){
+  const rot = pending.mode === 'rotate';
+  $('segMode').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === pending.mode)));
   $('segGrid').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.n === pending.n)));
-  $('segCh').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ch === pending.channel)));
+  $('segCh').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(rot ? pending.turn.includes(b.dataset.ch) : b.dataset.ch === pending.channel)));
   $('segLines').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lines === pending.lines)));
-  $('segDiff').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.diff === pending.difficulty)));
+  $('segDiff').querySelectorAll('button').forEach(b => {
+    b.setAttribute('aria-pressed', String(b.dataset.diff === pending.difficulty));
+    b.querySelector('small').textContent = DIFF_NOTES[pending.mode][b.dataset.diff];
+  });
+  $('chLabel').textContent = rot ? 'Colours that turn' : 'Colour that slips';
+  $('chNote').hidden = !rot;
+  $('linesField').hidden = rot;
 }
+$('segMode').addEventListener('click', e => { const b = e.target.closest('button'); if (b){ pending.mode = b.dataset.mode; syncSeg(); } });
 $('segDiff').addEventListener('click', e => { const b = e.target.closest('button'); if (b){ pending.difficulty = b.dataset.diff; syncSeg(); } });
 $('segGrid').addEventListener('click', e => { const b = e.target.closest('button'); if (b){ pending.n = +b.dataset.n; syncSeg(); } });
-$('segCh').addEventListener('click', e => { const b = e.target.closest('button'); if (b){ pending.channel = b.dataset.ch; syncSeg(); } });
+/* rotate mode takes one or two colours: tapping a colour adds or removes it, and a third one replaces the earliest pick */
+$('segCh').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const ch = b.dataset.ch;
+  if (pending.mode !== 'rotate') pending.channel = ch;
+  else if (pending.turn.includes(ch)){ if (pending.turn.length > 1) pending.turn = pending.turn.filter(k => k !== ch); }
+  else pending.turn = [...pending.turn, ch].slice(-2);
+  syncSeg();
+});
 $('segLines').addEventListener('click', e => { const b = e.target.closest('button'); if (b){ pending.lines = b.dataset.lines; syncSeg(); } });
 $('file').addEventListener('change', e => {
   const f = e.target.files && e.target.files[0]; e.target.value = '';
@@ -588,7 +778,10 @@ $('file').addEventListener('change', e => {
 });
 $('optNumbers').addEventListener('change', e => { S.set.numbers = e.target.checked; saveSettings(); applyPrefs(); refresh(); });
 $('optHints').addEventListener('change', e => { S.set.hints = e.target.checked; saveSettings(); applyPrefs(); refresh(); });
-$('startBtn').addEventListener('click', () => { Object.assign(S.set, pending); saveSettings(); closeSheet(); newPuzzle(); });
+$('startBtn').addEventListener('click', () => {
+  Object.assign(S.set, pending, { turn:['r','g','b'].filter(k => pending.turn.includes(k)) });
+  saveSettings(); closeSheet(); newPuzzle();
+});
 $('closeSheet').addEventListener('click', closeSheet);
 $('sheet').addEventListener('click', e => { if (e.target === $('sheet')) closeSheet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('sheet').hidden) closeSheet(); });
@@ -625,13 +818,21 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:'){
 function snapshot(){
   const keep = S.set.scene !== 'up' && !S.solved;
   return { set:Object.assign({}, S.set, { scene:S.set.scene === 'up' ? 0 : S.set.scene }),
-    game:keep ? { kind:'slip', scr:S.scr, cor:S.cor, sel:S.sel, moves:S.moves, peeks:S.peeks, elapsed:Math.round(elapsed()) } : null };
+    game:keep ? { kind:rotating() ? 'turn' : 'slip', scr:S.scr, cor:S.cor, sel:S.sel, moves:S.moves, peeks:S.peeks, elapsed:Math.round(elapsed()) } : null };
+}
+/* a saved game only resumes when it matches the saved settings: same mode, grid and number of turning colours */
+function fits(g){
+  if (!g || !g.scr || !g.cor || !g.sel) return false;
+  const n = S.set.n, keys = rotating() ? S.set.turn.map((_, c) => 'c' + c) : ['row', 'col'], len = rotating() ? n * n : n;
+  return g.kind === (rotating() ? 'turn' : 'slip') && Object.keys(g.scr).length === keys.length
+    && keys.every(t => Array.isArray(g.scr[t]) && g.scr[t].length === len && Array.isArray(g.cor[t]) && g.cor[t].length === len)
+    && keys.includes(g.sel.t) && g.sel.i >= 0 && g.sel.i < len;
 }
 function start(data){
   data = data || {};
   if (data.set) S.set = cleanSettings(data.set);
   const g = data.game;
-  if (g && g.kind === 'slip' && g.scr && g.scr.row && g.scr.row.length === S.set.n && g.cor && g.sel){
+  if (fits(g)){
     Object.assign(S, { scr:g.scr, cor:g.cor, sel:g.sel, moves:g.moves | 0, peeks:g.peeks | 0, elapsed:g.elapsed || 0, running:false, solved:false });
     startGame();
     if (S.moves > 0) stage.classList.remove('fresh');

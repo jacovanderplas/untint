@@ -77,6 +77,22 @@ try {
   const tabAfter = await page.textContent('#colTabs .tab:nth-child(2)');
   check('game in progress survives closing and reopening', movesAfter.trim() === '1 move' && tabAfter === tabBefore, `${movesAfter}, column 2 at ${tabAfter}`);
 
+  // rotate mode with two colours: dragging round the middle tile turns it
+  await page.click('#newBtn');
+  await page.click('#segMode [data-mode="rotate"]');
+  await page.click('#segGrid [data-n="3"]');
+  await page.click('.pic[data-k="0"]');
+  await page.click('#startBtn');
+  const rbox = await page.locator('#stage').boundingBox();
+  const cx = rbox.x + rbox.width / 2, cy = rbox.y + rbox.height / 2, rad = rbox.width / 8;
+  await page.mouse.move(cx + rad, cy); await page.mouse.down();
+  for (let s = 1; s <= 8; s++) await page.mouse.move(cx + rad * Math.cos(s * .1), cy + rad * Math.sin(s * .1));
+  await page.screenshot({ path: path.join(SHOTS, 'rotating.png') });
+  await page.mouse.up();
+  const rot = await page.evaluate(() => ({ moves: document.getElementById('stMoves').textContent, turned: document.getElementById('lineMoved').textContent,
+    kind: document.getElementById('lineKind').textContent, colours: document.querySelectorAll('#turnCh button').length, caption: document.getElementById('sceneBtn').textContent }));
+  check('rotate mode: a drag round a tile turns it', rot.moves === '1 move' && rot.kind === 'Tile' && rot.turned !== 'turned 0°' && rot.colours === 2, JSON.stringify(rot));
+
   server.kill(); await sleep(600);
   await context.setOffline(true);
   await page.reload();

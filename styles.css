@@ -73,6 +73,25 @@ button{ font:inherit; color:inherit; cursor:pointer }
 .stage.shine::after{ animation:shine 1.2s .15s ease-out forwards }
 @keyframes shine{ to{ transform:translateX(120%) } }
 
+/* rotate mode: no line tabs, the picture takes their room; each tile shows its turn and a dot when it is right */
+.sel .arrows .rot, .phead .rot{ display:none }
+.mode-rotate .sel .arrows .mv, .mode-rotate .phead .mv{ display:none }
+.mode-rotate .sel .arrows .rot, .mode-rotate .phead .rot{ display:block }
+.mode-rotate .board{ grid-template-columns:0 auto; grid-template-rows:0 auto auto; column-gap:0 }
+.mode-rotate .tabs{ visibility:hidden }
+.mode-rotate .stage{ width:min(calc(100vw - 32px), 62vh, 560px) }
+.tiles{ position:absolute; inset:0; display:none; grid-template-columns:repeat(var(--n),1fr); grid-template-rows:repeat(var(--n),1fr); pointer-events:none; transition:opacity .3s }
+.mode-rotate .tiles{ display:grid }
+.tiles span{ position:relative }
+.tiles b{ position:absolute; right:4px; bottom:4px; padding:1px 5px; border-radius:6px; background:rgba(12,14,24,.55); color:#fff; font-family:var(--f-mono); font-size:10px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.5 }
+.tiles b:empty, .nonum .tiles b{ display:none }
+.tiles span.ok::after{ content:""; position:absolute; top:5px; right:5px; width:7px; height:7px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 1.5px rgba(255,255,255,.85) }
+.dragging .tiles, .peeking .tiles, .solved .tiles{ opacity:0 }
+.turnch button{ display:flex; align-items:center; justify-content:center; gap:2px; min-height:38px }
+.turnch button.ok::after{ content:"✓"; margin-left:6px; color:var(--ok); font-weight:700 }
+.turnch button:disabled{ opacity:.4; cursor:default }
+.fnote{ margin:0; font-size:12px; color:var(--muted) }
+
 .tabs{ display:grid }
 .tabs.cols{ grid-column:2; grid-template-columns:repeat(var(--n),1fr) }
 .tabs.rows{ grid-column:1; grid-row:2; grid-template-rows:repeat(var(--n),1fr) }

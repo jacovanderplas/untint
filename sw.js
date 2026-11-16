@@ -2,7 +2,7 @@
    App files: network first (so updates arrive), cache when offline or the network takes over 3 s.
    Google Fonts: cache first, filled the first time they load.
    Bump VERSION on every release so old caches are cleared. */
-const VERSION = 'untint-1.1.0';
+const VERSION = 'untint-1.2.0';
 const SHELL = [
   './',
   'index.html',

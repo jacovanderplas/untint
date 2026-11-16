@@ -3,6 +3,11 @@
 A colour puzzle for phones. In every row and column of a picture, one colour (red, green or blue)
 has slipped out of register. Drag columns up and down and rows sideways until the picture lines up again.
 
+**Rotate mode** (choose it under *Mode* in the new-puzzle sheet) turns one or two colours inside each
+tile instead. Drag round a tile to turn it back. With two colours, tap the selected tile or use the
+colour buttons to switch which one you turn. Tiles where a colour is plain (a dark band, empty sky)
+are left out, because turning them would change nothing you can see.
+
 Untint is an installable web app (PWA): open it in a phone browser, add it to the home screen,
 and it runs full-screen and offline like a normal app. There is no app store and no build step.
 
