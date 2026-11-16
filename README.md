@@ -13,6 +13,7 @@ and it runs full-screen and offline like a normal app. There is no app store and
 | `index.html` | The page: board, control card, new-puzzle sheet |
 | `styles.css` | All styling, light and dark theme |
 | `app.js` | The game: picture generators, slipping, dragging, settings, saving |
+| `kallysoft-logo.js` | The kallysoft logo as vector paths, for the first picture (from the ks-docs plugin's `kallysoft-logo.svg`) |
 | `sw.js` | Service worker: makes the app work offline |
 | `manifest.webmanifest` | App name, icons and colours for installing |
 | `icons/` | App icons, made by `scripts/make_icons.py` |

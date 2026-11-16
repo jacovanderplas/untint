@@ -49,6 +49,20 @@ function sceneDusk(c, W, H){
   c.fillStyle = '#1d1630'; c.fillRect(0, hz - 1, W, 3);
 }
 
+// The kallysoft logo on paper, between two dark diagonals (house palette only).
+// The diagonals give every row and column an edge to line up, up to 6x6.
+function sceneKallysoft(c, W, H){
+  const k = W / 720;
+  c.fillStyle = '#ffffff'; c.fillRect(0, 0, W, H);
+  c.fillStyle = '#232323';
+  c.beginPath(); c.moveTo(0, 0); c.lineTo(W, 0); c.lineTo(W, 30 * k); c.lineTo(0, 236 * k); c.closePath(); c.fill();
+  c.fillStyle = '#0e0e0e';
+  c.beginPath(); c.moveTo(0, 690 * k); c.lineTo(W, 484 * k); c.lineTo(W, H); c.lineTo(0, H); c.closePath(); c.fill();
+  c.save(); c.translate(63.5 * k, 250.5 * k); c.scale(k, k);
+  c.fillStyle = '#0a0a0a'; c.fill(new Path2D(self.KALLYSOFT_LOGO.d));
+  c.restore();
+}
+
 function sceneBeach(c, W, H){
   const r = rng(3), sea = H * .5, shore = H * .66;
   c.fillStyle = grad(c, 0, sea, [[0,'#2a7fd4'],[1,'#a9dcf6']]); c.fillRect(0, 0, W, sea);
@@ -156,6 +170,7 @@ function sceneCity(c, W, H){
 }
 
 const SCENES = [
+  { name:'kallysoft', draw:sceneKallysoft },
   { name:'Beach day', draw:sceneBeach },
   { name:'Lake at dusk', draw:sceneDusk },
   { name:'Balloon morning', draw:sceneBalloons },

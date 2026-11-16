@@ -24,7 +24,10 @@ function serve(){
 }
 
 let server = serve();
-await sleep(1200);
+for (let i = 0; i < 50; i++){ // wait up to 10 s for the server to answer
+  if (await fetch(URL).then(r => r.ok, () => false)) break;
+  await sleep(200);
+}
 const userDataDir = fs.mkdtempSync(path.join(ROOT, 'test', '.profile-'));
 const context = await chromium.launchPersistentContext(userDataDir, {
   executablePath: EDGE, headless: true,
@@ -49,14 +52,14 @@ try {
   check('manifest loads without errors', manifest.errors.length === 0, manifest.errors.map(e => e.message).join('; '));
   check('no installability errors', inst.installabilityErrors.length === 0, inst.installabilityErrors.map(e => e.errorId).join(', '));
 
-  // start a known puzzle: Beach day, 3x3, easy
+  // start a known puzzle: the kallysoft logo, 3x3, easy
   await page.click('#newBtn');
   await page.click('#segGrid [data-n="3"]');
   await page.click('#segDiff [data-diff="easy"]');
   await page.click('.pic[data-k="0"]');
   await page.click('#startBtn');
   const caption = await page.textContent('#sceneBtn');
-  check('Beach day is the first picture', caption.startsWith('Beach day'), caption);
+  check('the kallysoft logo is the first picture', caption.startsWith('kallysoft'), caption);
 
   const box = await page.locator('#stage').boundingBox();
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
